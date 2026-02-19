@@ -1,6 +1,10 @@
 // Vercel Serverless Function: /api/etf?codes=009816,00955,009805,00713,00635U
-// Data source (NAV + premium): MoneyDJ basic page
-// Optional realtime price: TWSE mis.twse getStockInfo (if reachable)
+// Data source (NAV + premium): MoneyDJ basic page (HTML -> text -> regex)
+// Optional realtime price: TWSE mis.twse getStockInfo (best-effort)
+//
+// Notes:
+// - Some sources may block server IPs. MoneyDJ usually OK.
+// - TWSE realtime is best-effort; if fails, we keep MoneyDJ price.
 
 module.exports = async (req, res) => {
   const codesRaw = (req.query.codes || "").toString().trim();
@@ -14,7 +18,7 @@ module.exports = async (req, res) => {
   }
 
   try {
-    // 1) MoneyDJ: NAV + (MoneyDJ) price + premium%
+    // 1) MoneyDJ: NAV + price + premium (if present)
     const items = await Promise.all(codes.map(fetchFromMoneyDJ));
 
     // 2) Optional: Replace price with TWSE realtime (if available)
@@ -25,15 +29,18 @@ module.exports = async (req, res) => {
         const rt = twsePriceMap[it.code];
         if (typeof rt === "number" && Number.isFinite(rt)) {
           it.price = rt;
+          it.priceFrom = "TWSE realtime";
           if (typeof it.nav === "number" && Number.isFinite(it.nav) && it.nav !== 0) {
             it.premiumPct = round2(((it.price - it.nav) / it.nav) * 100);
             it.premiumFrom = "TWSE realtime price vs MoneyDJ NAV";
           }
+        } else {
+          it.priceFrom = it.priceFrom || "MoneyDJ";
         }
       }
     } catch (e) {
-      // Ignore TWSE failure; keep MoneyDJ price
       for (const it of items) {
+        it.priceFrom = it.priceFrom || "MoneyDJ";
         it.realtimePriceNote = "TWSE realtime price fetch failed; using MoneyDJ price.";
       }
     }
@@ -64,28 +71,53 @@ function round2(n) {
 }
 
 async function fetchFromMoneyDJ(code) {
+  // Use .TW (uppercase) for stability
   const url = `https://www.moneydj.com/etf/x/basic/basic0004.xdjhtm?etfid=${encodeURIComponent(
-    code
-  )}.tw`;
+    `${code}.TW`
+  )}`;
 
   const html = await fetchText(url);
 
-  // Example patterns in page text:
-  // ETF市價 52.4000（02/11）
-  // ETF淨值 52.7700（02/11）
-  // 折溢價(%) -0.70(月均:-0.54)
-  const mdPrice = pickNumber(html, /ETF市價\s*([0-9]+(?:\.[0-9]+)?)/);
-  const nav = pickNumber(html, /ETF淨值\s*([0-9]+(?:\.[0-9]+)?)/);
-  const navDate = pickText(html, /ETF淨值\s*[0-9]+(?:\.[0-9]+)?（([0-9]{2}\/[0-9]{2})）/);
-  const premiumPct = pickNumber(html, /折溢價\(%\)\s*([+-]?[0-9]+(?:\.[0-9]+)?)/);
+  // Convert HTML to searchable plain text
+  const text = html
+    .replace(/<script[\s\S]*?<\/script>/gi, " ")
+    .replace(/<style[\s\S]*?<\/style>/gi, " ")
+    .replace(/&nbsp;/g, " ")
+    .replace(/&#160;/g, " ")
+    .replace(/&amp;/g, "&")
+    .replace(/&lt;/g, "<")
+    .replace(/&gt;/g, ">")
+    .replace(/&quot;/g, '"')
+    .replace(/&#39;/g, "'")
+    .replace(/<[^>]+>/g, " ")
+    .replace(/\s+/g, " ")
+    .trim();
+
+  // Price / NAV / Date / Premium patterns (loose)
+  const mdPrice = pickNumber(text, /ETF\s*市\s*價\s*([0-9]+(?:\.[0-9]+)?)/i);
+  const nav = pickNumber(text, /ETF\s*淨\s*值(?:\s*\(NAV\))?\s*([0-9]+(?:\.[0-9]+)?)/i);
+
+  const navDate =
+    pickText(
+      text,
+      /ETF\s*淨\s*值(?:\s*\(NAV\))?\s*[0-9]+(?:\.[0-9]+)?\s*[（(]([0-9]{2}\/[0-9]{2})[）)]/i
+    ) || null;
+
+  let premiumPct = pickNumber(text, /折\s*溢\s*價\s*\(%\)\s*([+-]?[0-9]+(?:\.[0-9]+)?)/i);
+
+  // If premium not shown but we have price + nav, compute it
+  if (premiumPct == null && typeof mdPrice === "number" && typeof nav === "number" && nav !== 0) {
+    premiumPct = round2(((mdPrice - nav) / nav) * 100);
+  }
 
   return {
     code,
     nav: typeof nav === "number" ? nav : null,
-    navDate: navDate || null,
+    navDate,
     price: typeof mdPrice === "number" ? mdPrice : null,
+    priceFrom: typeof mdPrice === "number" ? "MoneyDJ" : null,
     premiumPct: typeof premiumPct === "number" ? premiumPct : null,
-    premiumFrom: "MoneyDJ",
+    premiumFrom: premiumPct == null ? null : "MoneyDJ (parsed)",
     moneydjUrl: url,
   };
 }
@@ -93,7 +125,6 @@ async function fetchFromMoneyDJ(code) {
 async function fetchText(url) {
   const r = await fetch(url, {
     headers: {
-      // mimic a normal browser a bit (some sites are picky)
       "User-Agent":
         "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36",
       Accept: "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
@@ -120,7 +151,8 @@ function pickText(text, re) {
   return m ? m[1] : null;
 }
 
-// TWSE realtime price (best-effort). Many ETF codes are on TSE.
+// TWSE realtime price (best-effort).
+// ex_ch supports multiple symbols separated by "|", e.g. tse_00713.tw|tse_00955.tw
 async function fetchTwseRealtimePrices(codes) {
   const exCh = codes.map((c) => `tse_${c}.tw`).join("|");
   const url = `https://mis.twse.com.tw/stock/api/getStockInfo.jsp?ex_ch=${encodeURIComponent(
