@@ -2,124 +2,119 @@
 <html lang="zh-TW">
 <head>
   <meta charset="UTF-8" />
-  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0"/>
   <title>ETF 折溢價監控看板</title>
   <script src="https://cdn.tailwindcss.com"></script>
   <style>
     .signal-buy { background-color: #dcfce7; color: #166534; }
     .signal-wait { background-color: #fee2e2; color: #991b1b; }
     .signal-neutral { background-color: #fef3c7; color: #92400e; }
+    .mono { font-variant-numeric: tabular-nums; font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", monospace; }
   </style>
 </head>
 
 <body class="bg-gray-50 min-h-screen p-4 md:p-8">
   <div class="max-w-5xl mx-auto">
-    <header class="mb-5">
-      <h1 class="text-3xl font-bold text-gray-800">📊 2,440 萬計畫：ETF 折溢價監控</h1>
-      <p class="text-gray-600 mt-2">盤中 120 秒刷新；盤外自動放慢。資料源：WantGoo（第三方）</p>
-
-      <div class="mt-3 flex flex-col md:flex-row md:items-center md:justify-between gap-3">
-        <div class="text-sm text-gray-600">
-          最後更新：<span id="lastUpdated" class="font-mono text-gray-800">--</span>
-          <span id="marketBadge" class="ml-2 px-2 py-1 rounded-full text-xs bg-gray-200 text-gray-700">--</span>
+    <header class="mb-6">
+      <div class="flex flex-col md:flex-row md:items-end md:justify-between gap-3">
+        <div>
+          <h1 class="text-3xl font-bold text-gray-800">📊 2,440 萬計畫：ETF 折溢價監控</h1>
+          <p class="text-gray-600 mt-2">
+            自動抓取 NAV / 市價，並依折溢價給加碼燈號（每 120 秒刷新）。
+          </p>
         </div>
 
-        <div class="flex flex-wrap items-center gap-2">
-          <button id="refreshBtn"
-            class="px-3 py-2 rounded-lg bg-white border border-gray-200 shadow-sm hover:bg-gray-50 text-sm">
-            手動刷新
+        <div class="flex items-center gap-2">
+          <button id="btnRefresh"
+                  class="px-4 py-2 rounded-xl bg-gray-900 text-white hover:bg-gray-800 transition">
+            立即刷新
           </button>
-
-          <button id="toggleManualBtn"
-            class="px-3 py-2 rounded-lg bg-white border border-gray-200 shadow-sm hover:bg-gray-50 text-sm">
-            允許手動覆寫：關
-          </button>
-
-          <button id="resetBtn"
-            class="px-3 py-2 rounded-lg bg-white border border-gray-200 shadow-sm hover:bg-gray-50 text-sm text-red-600">
-            清除覆寫
+          <button id="btnClear"
+                  class="px-4 py-2 rounded-xl bg-white border border-gray-200 text-gray-700 hover:bg-gray-50 transition">
+            清除快取顯示
           </button>
         </div>
       </div>
 
-      <div id="statusBar" class="mt-3 hidden">
-        <div id="statusText" class="text-sm px-3 py-2 rounded-lg border"></div>
+      <div class="mt-4 grid grid-cols-1 md:grid-cols-3 gap-3">
+        <div class="p-4 bg-white rounded-2xl border border-gray-200 shadow-sm">
+          <div class="text-xs text-gray-500">狀態</div>
+          <div id="statusText" class="mt-1 font-bold text-gray-800">等待第一次刷新…</div>
+          <div id="statusSub" class="mt-1 text-sm text-gray-500"></div>
+        </div>
+
+        <div class="p-4 bg-white rounded-2xl border border-gray-200 shadow-sm">
+          <div class="text-xs text-gray-500">最近更新</div>
+          <div id="lastUpdated" class="mt-1 font-bold text-gray-800 mono">--</div>
+          <div class="mt-1 text-sm text-gray-500">資料來源：MoneyDJ（NAV）+ TWSE（即時市價，若可用）</div>
+        </div>
+
+        <div class="p-4 bg-white rounded-2xl border border-gray-200 shadow-sm">
+          <div class="text-xs text-gray-500">下次刷新</div>
+          <div id="nextRefresh" class="mt-1 font-bold text-gray-800 mono">--</div>
+          <div class="mt-1 text-sm text-gray-500">刷新頻率：120 秒</div>
+        </div>
       </div>
     </header>
 
     <div class="bg-white rounded-2xl shadow-sm border border-gray-200 overflow-hidden">
-      <table class="w-full text-left border-collapse">
-        <thead class="bg-gray-100 text-gray-700 uppercase text-sm">
-          <tr>
-            <th class="px-6 py-4">代碼 / 名稱</th>
-            <th class="px-6 py-4">淨值 (NAV)</th>
-            <th class="px-6 py-4">市價</th>
-            <th class="px-6 py-4">折溢價 %</th>
-            <th class="px-6 py-4">加碼燈號</th>
-          </tr>
-        </thead>
-        <tbody id="etfTable"></tbody>
-      </table>
+      <div class="overflow-x-auto">
+        <table class="w-full text-left border-collapse">
+          <thead class="bg-gray-100 text-gray-700 uppercase text-sm">
+            <tr>
+              <th class="px-6 py-4">代碼 / 名稱</th>
+              <th class="px-6 py-4">NAV</th>
+              <th class="px-6 py-4">NAV 日期</th>
+              <th class="px-6 py-4">市價</th>
+              <th class="px-6 py-4">折溢價 %</th>
+              <th class="px-6 py-4">加碼燈號</th>
+              <th class="px-6 py-4">來源</th>
+            </tr>
+          </thead>
+          <tbody id="etfTable">
+            <!-- rows by JS -->
+          </tbody>
+        </table>
+      </div>
     </div>
 
     <div class="mt-6 grid grid-cols-1 md:grid-cols-2 gap-4">
       <div class="p-4 bg-blue-50 border border-blue-200 rounded-xl">
         <h3 class="font-bold text-blue-800 mb-2">💡 燈號規則（可自行改門檻）</h3>
-        <ul class="text-sm space-y-1 text-blue-900/90">
-          <li>折溢價 &lt; -0.50%：強力加碼</li>
-          <li>-0.50% ≤ 折溢價 &lt; -0.10%：小幅加碼</li>
-          <li>-0.10% ≤ 折溢價 ≤ 0.50%：合理觀察</li>
-          <li>折溢價 &gt; 0.50%：溢價避開</li>
+        <ul class="text-sm space-y-1 text-blue-900">
+          <li><span class="font-bold">折價 &lt; -0.50%</span>：強力加碼</li>
+          <li><span class="font-bold">-0.50% ≤ 折價 &lt; -0.10%</span>：小幅加碼</li>
+          <li><span class="font-bold">-0.10% ≤ 折溢價 ≤ 0.50%</span>：合理觀察</li>
+          <li><span class="font-bold">溢價 &gt; 0.50%</span>：溢價避開</li>
         </ul>
       </div>
 
       <div class="p-4 bg-gray-100 border border-gray-200 rounded-xl">
-        <h3 class="font-bold text-gray-800 mb-2">🛠️ 備註</h3>
-        <p class="text-sm text-gray-700">
-          盤中每 120 秒自動更新。若 WantGoo 改版或暫時封鎖頻率，可能會顯示錯誤提示。
-          你仍可開啟「允許手動覆寫」自行填值計算折溢價。
+        <h3 class="font-bold text-gray-800 mb-2">🛠️ 說明</h3>
+        <p class="text-sm text-gray-600">
+          這個頁面會呼叫同一個 Vercel 專案的 <span class="mono font-bold">/api/etf</span>。
+          所以前台不用放 API Key，也不會遇到瀏覽器 CORS。
+        </p>
+        <p class="text-sm text-gray-600 mt-2">
+          若你看到「TWSE realtime」拿不到，會自動 fallback 用 MoneyDJ 的市價（best-effort）。
         </p>
       </div>
     </div>
   </div>
 
   <script>
-    // ===== 你的追蹤清單（依你目前庫存）=====
-    const etfs = [
+    // ====== 你要監控的 ETF 清單（可自行增減） ======
+    const ETFS = [
       { code: '009816', name: '凱基台灣TOP50' },
       { code: '00955',  name: '中信日本商社' },
       { code: '009805', name: '新光美國電力基建' },
       { code: '00713',  name: '元大台灣高息低波' },
-      { code: '00635U', name: '期元大S&P黃金' },
+      { code: '00635U', name: '期元大S&P黃金' }
     ];
 
-    // localStorage（手動覆寫用）
-    const OVERRIDE_KEY = "etf_dash_overrides_v1";
+    const REFRESH_MS = 120000;
 
-    // UI 狀態
-    let manualEnabled = false;
-    let inFlight = false;
-    let timer = null;
-
-    function showStatus(kind, msg) {
-      const bar = document.getElementById('statusBar');
-      const box = document.getElementById('statusText');
-      bar.classList.remove('hidden');
-
-      if (kind === 'ok') {
-        box.className = "text-sm px-3 py-2 rounded-lg border border-green-200 bg-green-50 text-green-800";
-      } else if (kind === 'warn') {
-        box.className = "text-sm px-3 py-2 rounded-lg border border-yellow-200 bg-yellow-50 text-yellow-800";
-      } else {
-        box.className = "text-sm px-3 py-2 rounded-lg border border-red-200 bg-red-50 text-red-800";
-      }
-      box.textContent = msg;
-    }
-
-    function hideStatus() {
-      document.getElementById('statusBar').classList.add('hidden');
-    }
-
+    // ====== UI helpers ======
     function calculateSignal(premium) {
       if (premium < -0.5) return { text: '強力加碼', class: 'signal-buy' };
       if (premium < -0.1) return { text: '小幅加碼', class: 'signal-buy' };
@@ -127,264 +122,178 @@
       return { text: '溢價避開', class: 'signal-wait' };
     }
 
-    function getOverrides() {
-      try { return JSON.parse(localStorage.getItem(OVERRIDE_KEY) || "{}"); }
-      catch { return {}; }
+    function fmtNum(n, digits=2) {
+      if (n === null || n === undefined || Number.isNaN(n)) return '--';
+      const v = Number(n);
+      if (!Number.isFinite(v)) return '--';
+      return v.toFixed(digits);
     }
 
-    function setOverrides(obj) {
-      localStorage.setItem(OVERRIDE_KEY, JSON.stringify(obj));
+    function fmtPct(n) {
+      if (n === null || n === undefined || Number.isNaN(n)) return '--';
+      const v = Number(n);
+      if (!Number.isFinite(v)) return '--';
+      return (v >= 0 ? '+' : '') + v.toFixed(2) + '%';
     }
 
-    function clearOverrides() {
-      localStorage.removeItem(OVERRIDE_KEY);
+    function setStatus(main, sub='') {
+      document.getElementById('statusText').innerText = main;
+      document.getElementById('statusSub').innerText = sub;
     }
 
-    function num(x) {
-      const v = Number(x);
-      return Number.isFinite(v) ? v : null;
+    function isoToLocal(iso) {
+      try {
+        const d = new Date(iso);
+        if (isNaN(d.getTime())) return iso;
+        return d.toLocaleString('zh-TW', { hour12: false });
+      } catch {
+        return iso;
+      }
     }
 
-    function premiumPct(price, nav) {
-      if (!(price > 0 && nav > 0)) return null;
-      return ((price - nav) / nav) * 100;
-    }
+    // ====== render table ======
+    const tbody = document.getElementById('etfTable');
 
-    function setManualEnabled(enabled) {
-      manualEnabled = enabled;
-
-      document.getElementById('toggleManualBtn').textContent = `允許手動覆寫：${manualEnabled ? '開' : '關'}`;
-
-      // input 權限
-      etfs.forEach(etf => {
-        const p = document.getElementById(`price-${etf.code}`);
-        const n = document.getElementById(`nav-${etf.code}`);
-        if (!p || !n) return;
-        p.readOnly = !manualEnabled;
-        n.readOnly = !manualEnabled;
-
-        p.classList.toggle('bg-gray-50', !manualEnabled);
-        n.classList.toggle('bg-gray-50', !manualEnabled);
+    function renderEmpty() {
+      tbody.innerHTML = '';
+      ETFS.forEach((etf) => {
+        const tr = document.createElement('tr');
+        tr.className = "border-t border-gray-100";
+        tr.innerHTML = `
+          <td class="px-6 py-4">
+            <div class="font-bold text-gray-900 mono">${etf.code}</div>
+            <div class="text-xs text-gray-500">${etf.name}</div>
+          </td>
+          <td class="px-6 py-4 mono">--</td>
+          <td class="px-6 py-4 mono">--</td>
+          <td class="px-6 py-4 mono">--</td>
+          <td class="px-6 py-4 mono font-bold">--</td>
+          <td class="px-6 py-4 text-gray-400">等待數據</td>
+          <td class="px-6 py-4 text-gray-400">--</td>
+        `;
+        tbody.appendChild(tr);
       });
-
-      showStatus('warn',
-        manualEnabled
-          ? '已開啟手動覆寫：你可自行改 NAV/市價（會存到本機瀏覽器）。'
-          : '已關閉手動覆寫：數值以自動抓取為主。'
-      );
-      setTimeout(hideStatus, 1800);
     }
 
-    function updateRow(code) {
-      const priceEl = document.getElementById(`price-${code}`);
-      const navEl   = document.getElementById(`nav-${code}`);
-      const diffEl  = document.getElementById(`diff-${code}`);
-      const sigEl   = document.getElementById(`signal-${code}`);
+    function renderData(items, byCode) {
+      tbody.innerHTML = '';
+      ETFS.forEach((etf) => {
+        const it = byCode[etf.code] || null;
 
-      const price = num(priceEl?.value);
-      const nav   = num(navEl?.value);
+        const nav = it?.nav ?? null;
+        const navDate = it?.navDate ?? null;
+        const price = it?.price ?? null;
+        const premium = it?.premiumPct ?? null;
 
-      const prem = premiumPct(price, nav);
-      if (prem === null) {
-        diffEl.textContent = '--';
-        diffEl.className = "px-6 py-4 font-mono font-bold text-gray-500";
-        sigEl.textContent = '等待數據';
-        sigEl.className = "px-6 py-4 text-gray-400";
+        const signal = (typeof premium === 'number')
+          ? calculateSignal(premium)
+          : { text: '等待數據', class: '' };
+
+        const sourceText = [
+          it?.priceFrom ? `市價：${it.priceFrom}` : null,
+          it?.premiumFrom ? `折溢價：${it.premiumFrom}` : null
+        ].filter(Boolean).join('；') || '--';
+
+        const moneydjUrl = it?.moneydjUrl || null;
+
+        const tr = document.createElement('tr');
+        tr.className = "border-t border-gray-100 hover:bg-gray-50 transition";
+        tr.innerHTML = `
+          <td class="px-6 py-4">
+            <div class="font-bold text-gray-900 mono">${etf.code}</div>
+            <div class="text-xs text-gray-500">${etf.name}</div>
+            ${moneydjUrl ? `<a class="text-xs text-blue-600 underline" target="_blank" href="${moneydjUrl}">MoneyDJ</a>` : ''}
+          </td>
+
+          <td class="px-6 py-4 mono">${fmtNum(nav, 2)}</td>
+          <td class="px-6 py-4 mono">${navDate || '--'}</td>
+          <td class="px-6 py-4 mono">${fmtNum(price, 2)}</td>
+          <td class="px-6 py-4 mono font-bold">${fmtPct(premium)}</td>
+
+          <td class="px-6 py-4 font-bold ${signal.class}">
+            ${signal.text}
+          </td>
+
+          <td class="px-6 py-4 text-xs text-gray-600">
+            ${sourceText}
+          </td>
+        `;
+        tbody.appendChild(tr);
+      });
+    }
+
+    // ====== fetch & refresh ======
+    let timer = null;
+    let nextTick = null;
+
+    function updateNextRefreshUI() {
+      if (!nextTick) {
+        document.getElementById('nextRefresh').innerText = '--';
         return;
       }
-
-      diffEl.textContent = prem.toFixed(2) + '%';
-      diffEl.className = "px-6 py-4 font-mono font-bold " + (prem < 0 ? "text-green-700" : "text-red-700");
-
-      const sig = calculateSignal(prem);
-      sigEl.textContent = sig.text;
-      sigEl.className = `px-6 py-4 font-bold ${sig.class}`;
+      const now = Date.now();
+      const left = Math.max(0, nextTick - now);
+      const sec = Math.ceil(left / 1000);
+      const mm = String(Math.floor(sec / 60)).padStart(2, '0');
+      const ss = String(sec % 60).padStart(2, '0');
+      document.getElementById('nextRefresh').innerText = `${mm}:${ss}`;
     }
 
-    function saveOverride(code) {
-      const o = getOverrides();
-      o[code] = {
-        price: document.getElementById(`price-${code}`)?.value ?? "",
-        nav: document.getElementById(`nav-${code}`)?.value ?? ""
-      };
-      setOverrides(o);
-    }
-
-    function loadOverridesIntoInputs() {
-      const o = getOverrides();
-      for (const [code, v] of Object.entries(o)) {
-        const p = document.getElementById(`price-${code}`);
-        const n = document.getElementById(`nav-${code}`);
-        if (p && typeof v.price !== 'undefined') p.value = v.price;
-        if (n && typeof v.nav !== 'undefined') n.value = v.nav;
-        updateRow(code);
-      }
-    }
-
-    // ===== Taipei 盤中判斷（不依賴使用者所在地時區）=====
-    function taipeiParts() {
-      const fmt = new Intl.DateTimeFormat('en-GB', {
-        timeZone: 'Asia/Taipei',
-        weekday: 'short',
-        hour: '2-digit',
-        minute: '2-digit',
-        hour12: false,
-      });
-      const parts = fmt.formatToParts(new Date());
-      const obj = {};
-      for (const p of parts) obj[p.type] = p.value;
-      return {
-        weekday: obj.weekday, // Mon/Tue/...
-        hour: Number(obj.hour),
-        minute: Number(obj.minute),
-      };
-    }
-
-    function isMarketHoursTW() {
-      const { weekday, hour, minute } = taipeiParts();
-      const wd = (weekday || '').toLowerCase();
-      if (wd.startsWith('sat') || wd.startsWith('sun')) return false;
-
-      const mins = hour * 60 + minute;
-      const open = 8 * 60 + 55;   // 08:55
-      const close = 13 * 60 + 35; // 13:35
-      return mins >= open && mins <= close;
-    }
-
-    function updateMarketBadge() {
-      const badge = document.getElementById('marketBadge');
-      if (isMarketHoursTW()) {
-        badge.textContent = '盤中（120 秒刷新）';
-        badge.className = 'ml-2 px-2 py-1 rounded-full text-xs bg-green-100 text-green-800';
-      } else {
-        badge.textContent = '盤外（30 分鐘刷新）';
-        badge.className = 'ml-2 px-2 py-1 rounded-full text-xs bg-gray-200 text-gray-700';
-      }
-    }
-
-    // ===== Render table =====
-    const tbody = document.getElementById('etfTable');
-    etfs.forEach(etf => {
-      const tr = document.createElement('tr');
-      tr.className = "border-t border-gray-100 hover:bg-gray-50 transition";
-
-      tr.innerHTML = `
-        <td class="px-6 py-4">
-          <div class="font-bold text-gray-800">${etf.code}</div>
-          <div class="text-xs text-gray-500">${etf.name}</div>
-        </td>
-
-        <td class="px-6 py-4">
-          <input id="nav-${etf.code}" type="number" step="0.01" placeholder="--"
-            class="w-28 p-1 border rounded bg-gray-50"
-            readonly />
-        </td>
-
-        <td class="px-6 py-4">
-          <input id="price-${etf.code}" type="number" step="0.01" placeholder="--"
-            class="w-28 p-1 border rounded bg-gray-50"
-            readonly />
-        </td>
-
-        <td class="px-6 py-4 font-mono font-bold text-gray-500" id="diff-${etf.code}">--</td>
-        <td class="px-6 py-4 text-gray-400" id="signal-${etf.code}">等待數據</td>
-      `;
-
-      tbody.appendChild(tr);
-
-      // 手動覆寫時，變更就存檔 + 更新燈號
-      const navEl = tr.querySelector(`#nav-${etf.code}`);
-      const priceEl = tr.querySelector(`#price-${etf.code}`);
-      navEl.addEventListener('input', () => {
-        if (manualEnabled) { saveOverride(etf.code); updateRow(etf.code); }
-      });
-      priceEl.addEventListener('input', () => {
-        if (manualEnabled) { saveOverride(etf.code); updateRow(etf.code); }
-      });
-    });
-
-    // ===== Fetch / API =====
     async function refresh() {
-      if (inFlight) return;
-      inFlight = true;
+      const codes = ETFS.map(x => x.code).join(',');
+      const url = `/api/etf?codes=${encodeURIComponent(codes)}`;
 
-      const btn = document.getElementById('refreshBtn');
-      btn.disabled = true;
-      btn.classList.add('opacity-60');
+      setStatus('刷新中…', url);
 
       try {
-        updateMarketBadge();
+        const r = await fetch(url, { cache: "no-store" });
+        const j = await r.json();
 
-        const codes = etfs.map(e => e.code).join(',');
-        const r = await fetch(`/api/etf?codes=${encodeURIComponent(codes)}`, { cache: 'no-store' });
+        if (!r.ok || !j?.ok) {
+          throw new Error(j?.error ? `${j.error}${j.message ? ' - ' + j.message : ''}` : `HTTP ${r.status}`);
+        }
 
-        if (!r.ok) throw new Error(`API 失敗：${r.status} ${r.statusText}`);
-        const data = await r.json();
+        document.getElementById('lastUpdated').innerText = isoToLocal(j.updatedAt || new Date().toISOString());
+        renderData(j.items || [], j.byCode || {});
+        setStatus('✅ 正常', j.source || '');
 
-        const ts = new Date(data.asOf || Date.now());
-        document.getElementById('lastUpdated').textContent =
-          ts.toLocaleString('zh-TW', { hour12: false });
-
-        // 若你開了手動覆寫，就不要蓋掉你手動輸入的值
-        const overrides = getOverrides();
-
-        (data.items || []).forEach(item => {
-          const code = item.code;
-          if (!code) return;
-
-          const navEl = document.getElementById(`nav-${code}`);
-          const priceEl = document.getElementById(`price-${code}`);
-
-          const hasOverride = manualEnabled && overrides[code] && (
-            (overrides[code].nav ?? '') !== '' || (overrides[code].price ?? '') !== ''
-          );
-
-          if (!hasOverride) {
-            if (navEl) navEl.value = (item.nav ?? '') === null ? '' : item.nav ?? '';
-            if (priceEl) priceEl.value = (item.price ?? '') === null ? '' : item.price ?? '';
-          }
-
-          updateRow(code);
-        });
-
-        hideStatus();
+        // schedule next
+        nextTick = Date.now() + REFRESH_MS;
       } catch (e) {
-        showStatus('err', `更新失敗：${e.message || e}`);
-      } finally {
-        btn.disabled = false;
-        btn.classList.remove('opacity-60');
-        inFlight = false;
+        setStatus('⚠️ 刷新失敗', String(e?.message || e));
       }
     }
 
-    // ===== Scheduler: 盤中 120 秒 / 盤外 30 分鐘 =====
-    async function tick() {
-      await refresh();
-      const nextMs = isMarketHoursTW() ? 120000 : 1800000;
-      timer = setTimeout(tick, nextMs);
+    function startAutoRefresh() {
+      if (timer) clearInterval(timer);
+      // countdown UI update every 1s
+      timer = setInterval(updateNextRefreshUI, 1000);
+
+      // refresh loop
+      setInterval(() => refresh(), REFRESH_MS);
+      nextTick = Date.now() + REFRESH_MS;
     }
 
-    // ===== Buttons =====
-    document.getElementById('refreshBtn').addEventListener('click', refresh);
-
-    document.getElementById('toggleManualBtn').addEventListener('click', () => {
-      setManualEnabled(!manualEnabled);
-      if (manualEnabled) loadOverridesIntoInputs();
+    // ====== actions ======
+    document.getElementById('btnRefresh').addEventListener('click', async () => {
+      await refresh();
+      nextTick = Date.now() + REFRESH_MS;
     });
 
-    document.getElementById('resetBtn').addEventListener('click', () => {
-      clearOverrides();
-      showStatus('ok', '已清除手動覆寫。');
-      setTimeout(hideStatus, 1400);
-      if (manualEnabled) loadOverridesIntoInputs();
-      refresh();
+    document.getElementById('btnClear').addEventListener('click', () => {
+      renderEmpty();
+      document.getElementById('lastUpdated').innerText = '--';
+      setStatus('已清空顯示', '按「立即刷新」重新抓取');
     });
 
     // init
-    updateMarketBadge();
-    loadOverridesIntoInputs(); // 若之前有覆寫，先載入（但仍維持 manual 關，避免誤觸）
-    tick();
+    renderEmpty();
+    refresh();
+    startAutoRefresh();
   </script>
+</body>
+</html>
+
 </body>
 </html>
 
