@@ -5,10 +5,6 @@
 // Fixes:
 // - If MoneyDJ premium is missing OR looks wrong, compute premium from (price - nav) / nav.
 // - Prefer TWSE realtime price when reachable; fallback to MoneyDJ price.
-//
-// Notes:
-// - Some sources may block server IPs. MoneyDJ usually OK.
-// - TWSE realtime is best-effort; if it fails, we keep MoneyDJ price.
 
 module.exports = async (req, res) => {
   const codesRaw = (req.query.codes || "").toString().trim();
@@ -22,11 +18,8 @@ module.exports = async (req, res) => {
   }
 
   try {
-    // 1) MoneyDJ: NAV + (page) price + premium (if present)
     const items = await Promise.all(codes.map(fetchFromMoneyDJ));
 
-    // 2) Optional: Replace price with TWSE realtime (if available)
-    //    If TWSE call fails, we keep MoneyDJ price.
     try {
       const twsePriceMap = await fetchTwseRealtimePrices(codes);
 
@@ -37,7 +30,6 @@ module.exports = async (req, res) => {
           it.price = rt;
           it.priceFrom = "TWSE realtime";
 
-          // If NAV exists, premium should be based on realtime price
           if (typeof it.nav === "number" && Number.isFinite(it.nav) && it.nav !== 0) {
             it.premiumPct = round2(((it.price - it.nav) / it.nav) * 100);
             it.premiumFrom = "TWSE realtime price vs MoneyDJ NAV";
@@ -56,7 +48,6 @@ module.exports = async (req, res) => {
     const byCode = Object.fromEntries(items.map((x) => [x.code, x]));
 
     res.setHeader("Content-Type", "application/json; charset=utf-8");
-    // cache at edge (Vercel) for 60s, allow stale for 5min
     res.setHeader("Cache-Control", "s-maxage=60, stale-while-revalidate=300");
 
     return res.status(200).json({
@@ -79,14 +70,12 @@ function round2(n) {
 }
 
 async function fetchFromMoneyDJ(code) {
-  // Use .TW (uppercase) for stability
   const url = `https://www.moneydj.com/etf/x/basic/basic0004.xdjhtm?etfid=${encodeURIComponent(
     `${code}.TW`
   )}`;
 
   const html = await fetchText(url);
 
-  // Convert HTML to searchable plain text
   const text = html
     .replace(/<script[\s\S]*?<\/script>/gi, " ")
     .replace(/<style[\s\S]*?<\/style>/gi, " ")
@@ -101,7 +90,6 @@ async function fetchFromMoneyDJ(code) {
     .replace(/\s+/g, " ")
     .trim();
 
-  // Price / NAV / Date / Premium patterns (loose)
   const mdPrice = pickNumber(text, /ETF\s*市\s*價\s*([0-9]+(?:\.[0-9]+)?)/i);
   const nav = pickNumber(text, /ETF\s*淨\s*值(?:\s*\(NAV\))?\s*([0-9]+(?:\.[0-9]+)?)/i);
 
@@ -111,22 +99,17 @@ async function fetchFromMoneyDJ(code) {
       /ETF\s*淨\s*值(?:\s*\(NAV\))?\s*[0-9]+(?:\.[0-9]+)?\s*[（(]([0-9]{2}\/[0-9]{2})[）)]/i
     ) || null;
 
-  // MoneyDJ premium (might be missing or parsed incorrectly)
   let premiumPct = pickNumber(text, /折\s*溢\s*價\s*\(%\)\s*([+-]?[0-9]+(?:\.[0-9]+)?)/i);
 
-  // Compute premium from (price - nav) / nav if we can
   const calcPremium =
     typeof mdPrice === "number" && typeof nav === "number" && nav !== 0
       ? round2(((mdPrice - nav) / nav) * 100)
       : null;
 
-  // 1) MoneyDJ did not provide premium -> use computed value
   if (premiumPct == null && calcPremium != null) {
     premiumPct = calcPremium;
   }
 
-  // 2) MoneyDJ provided premium but looks wrong -> trust computed value
-  //    (common when text parsing accidentally captures a wrong "0.00")
   if (premiumPct != null && calcPremium != null && Math.abs(premiumPct - calcPremium) > 1) {
     premiumPct = calcPremium;
   }
@@ -177,8 +160,6 @@ function pickText(text, re) {
   return m ? m[1] : null;
 }
 
-// TWSE realtime price (best-effort).
-// ex_ch supports multiple symbols separated by "|", e.g. tse_00713.tw|tse_00955.tw
 async function fetchTwseRealtimePrices(codes) {
   const exCh = codes.map((c) => `tse_${c}.tw`).join("|");
   const url = `https://mis.twse.com.tw/stock/api/getStockInfo.jsp?ex_ch=${encodeURIComponent(
@@ -204,7 +185,6 @@ async function fetchTwseRealtimePrices(codes) {
 
   for (const it of arr) {
     const code = (it?.c || "").toUpperCase();
-    // z: last price; if "-" then use pz (prev close)
     const z = parseFloat(it?.z);
     const pz = parseFloat(it?.pz);
     const price = Number.isFinite(z) ? z : Number.isFinite(pz) ? pz : null;
