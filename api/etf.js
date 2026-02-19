@@ -2,9 +2,13 @@
 // Data source (NAV + premium): MoneyDJ basic page (HTML -> text -> regex)
 // Optional realtime price: TWSE mis.twse getStockInfo (best-effort)
 //
+// Fixes:
+// - If MoneyDJ premium is missing OR looks wrong, compute premium from (price - nav) / nav.
+// - Prefer TWSE realtime price when reachable; fallback to MoneyDJ price.
+//
 // Notes:
 // - Some sources may block server IPs. MoneyDJ usually OK.
-// - TWSE realtime is best-effort; if fails, we keep MoneyDJ price.
+// - TWSE realtime is best-effort; if it fails, we keep MoneyDJ price.
 
 module.exports = async (req, res) => {
   const codesRaw = (req.query.codes || "").toString().trim();
@@ -18,18 +22,22 @@ module.exports = async (req, res) => {
   }
 
   try {
-    // 1) MoneyDJ: NAV + price + premium (if present)
+    // 1) MoneyDJ: NAV + (page) price + premium (if present)
     const items = await Promise.all(codes.map(fetchFromMoneyDJ));
 
     // 2) Optional: Replace price with TWSE realtime (if available)
     //    If TWSE call fails, we keep MoneyDJ price.
     try {
       const twsePriceMap = await fetchTwseRealtimePrices(codes);
+
       for (const it of items) {
         const rt = twsePriceMap[it.code];
+
         if (typeof rt === "number" && Number.isFinite(rt)) {
           it.price = rt;
           it.priceFrom = "TWSE realtime";
+
+          // If NAV exists, premium should be based on realtime price
           if (typeof it.nav === "number" && Number.isFinite(it.nav) && it.nav !== 0) {
             it.premiumPct = round2(((it.price - it.nav) / it.nav) * 100);
             it.premiumFrom = "TWSE realtime price vs MoneyDJ NAV";
@@ -103,11 +111,24 @@ async function fetchFromMoneyDJ(code) {
       /ETF\s*淨\s*值(?:\s*\(NAV\))?\s*[0-9]+(?:\.[0-9]+)?\s*[（(]([0-9]{2}\/[0-9]{2})[）)]/i
     ) || null;
 
+  // MoneyDJ premium (might be missing or parsed incorrectly)
   let premiumPct = pickNumber(text, /折\s*溢\s*價\s*\(%\)\s*([+-]?[0-9]+(?:\.[0-9]+)?)/i);
 
-  // If premium not shown but we have price + nav, compute it
-  if (premiumPct == null && typeof mdPrice === "number" && typeof nav === "number" && nav !== 0) {
-    premiumPct = round2(((mdPrice - nav) / nav) * 100);
+  // Compute premium from (price - nav) / nav if we can
+  const calcPremium =
+    typeof mdPrice === "number" && typeof nav === "number" && nav !== 0
+      ? round2(((mdPrice - nav) / nav) * 100)
+      : null;
+
+  // 1) MoneyDJ did not provide premium -> use computed value
+  if (premiumPct == null && calcPremium != null) {
+    premiumPct = calcPremium;
+  }
+
+  // 2) MoneyDJ provided premium but looks wrong -> trust computed value
+  //    (common when text parsing accidentally captures a wrong "0.00")
+  if (premiumPct != null && calcPremium != null && Math.abs(premiumPct - calcPremium) > 1) {
+    premiumPct = calcPremium;
   }
 
   return {
@@ -117,7 +138,12 @@ async function fetchFromMoneyDJ(code) {
     price: typeof mdPrice === "number" ? mdPrice : null,
     priceFrom: typeof mdPrice === "number" ? "MoneyDJ" : null,
     premiumPct: typeof premiumPct === "number" ? premiumPct : null,
-    premiumFrom: premiumPct == null ? null : "MoneyDJ (parsed)",
+    premiumFrom:
+      typeof premiumPct === "number"
+        ? premiumPct === calcPremium
+          ? "Computed from MoneyDJ price & NAV"
+          : "MoneyDJ (parsed)"
+        : null,
     moneydjUrl: url,
   };
 }
